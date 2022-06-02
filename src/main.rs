@@ -226,6 +226,20 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_syntax_error() {
+        let mut session = Session::new();
+
+        assert_eq!(
+            session.eval("syntax error".to_string()).await,
+            EvalResponse {
+                success: false,
+                objects: HashMap::new(),
+                value: LuaValue::Nil,
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn test_simple_table() {
         let mut session = Session::new();
         let resp = session.eval("x = {}; return x".to_string()).await;
