@@ -1,7 +1,11 @@
+use rlua::Context;
 use rlua::Error;
+use rlua::Function;
 use rlua::Lua;
+use rlua::Table;
 use rlua::Value;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io::BufRead;
 use std::thread;
 use tokio::sync::mpsc::UnboundedSender;
@@ -31,24 +35,80 @@ enum LuaValue {
 
 #[derive(Debug)]
 struct LuaObject {
-    members: Vec<(String, LuaValue)>,
+    members: Vec<(LuaValue, LuaValue)>,
 }
 
-impl From<Result<Value<'_>, Error>> for EvalResponse {
-    fn from(eval_result: Result<Value<'_>, Error>) -> Self {
+impl LuaObject {
+    pub fn new() -> Self {
+        Self { members: vec![] }
+    }
+
+    pub fn insert(&mut self, key: LuaValue, value: LuaValue) {
+        self.members.push((key, value));
+    }
+}
+
+fn parse_value<'l>(
+    ctx: Context<'l>,
+    rlua_value: Value<'l>,
+    objects: &mut HashMap<String, LuaObject>,
+    seen_objs: &mut HashSet<String>,
+) -> LuaValue {
+    match rlua_value {
+        Value::Table(t) => {
+            let to_string: Function = ctx.globals().get("tostring").unwrap();
+            parse_table(ctx, t.clone(), objects, seen_objs);
+            LuaValue::ObjectRef(to_string.call::<_, String>(t).unwrap())
+        }
+        Value::Boolean(b) => LuaValue::Boolean(b),
+        Value::String(s) => LuaValue::String(s.to_str().unwrap_or_default().to_string()),
+        Value::Number(n) => LuaValue::Number(n),
+        Value::Integer(n) => LuaValue::Number(n as f64),
+        Value::Nil => LuaValue::Nil,
+        v => panic!("Error: Not yet supported {:?}", v),
+    }
+}
+
+fn parse_table<'lua>(
+    ctx: Context<'lua>,
+    table: Table<'lua>,
+    objects: &mut HashMap<String, LuaObject>,
+    seen_objs: &mut HashSet<String>,
+) -> String {
+    let to_string: Function = ctx.globals().get("tostring").unwrap();
+    let table_id = to_string.call::<_, String>(table.clone()).unwrap();
+
+    if seen_objs.insert(table_id.clone()) {
+        let mut object = LuaObject::new();
+        for (k, v) in table
+            .pairs::<Value, Value>()
+            .into_iter()
+            .map(|r| r.unwrap())
+        {
+            object.insert(
+                parse_value(ctx, k, objects, seen_objs),
+                parse_value(ctx, v, objects, seen_objs),
+            );
+        }
+        objects.insert(table_id.clone(), object);
+    }
+
+    table_id
+}
+
+impl EvalResponse {
+    fn from_result<'l>(ctx: Context<'l>, eval_result: Result<Value<'l>, Error>) -> Self {
         match eval_result {
             Err(_e) => Self {
                 success: false,
                 objects: HashMap::new(),
                 value: LuaValue::Nil,
             },
-            Ok(v) => Self::from(v),
+            Ok(v) => Self::from_value(ctx, v),
         }
     }
-}
 
-impl From<Value<'_>> for EvalResponse {
-    fn from(value: Value) -> Self {
+    fn from_value<'l>(ctx: Context<'l>, value: Value<'l>) -> Self {
         match value {
             Value::Boolean(b) => Self {
                 success: true,
@@ -75,6 +135,16 @@ impl From<Value<'_>> for EvalResponse {
                 objects: HashMap::new(),
                 value: LuaValue::Nil,
             },
+            Value::Table(t) => {
+                let mut objects = HashMap::new();
+                let mut seen_objs = HashSet::new();
+                let table_id = parse_table(ctx, t, &mut objects, &mut seen_objs);
+                Self {
+                    success: true,
+                    objects,
+                    value: LuaValue::ObjectRef(table_id),
+                }
+            }
             v => panic!("Value not yet supported {:?}", v),
         }
     }
@@ -92,7 +162,7 @@ impl Session {
                         .into_iter()
                         .map(|expr| (ctx.load(&expr).eval::<Value>(), expr))
                         .for_each(|(result, expr)| {
-                            println!("{} -> {:?}", expr, EvalResponse::from(result))
+                            println!("{} -> {:#?}", expr, EvalResponse::from_result(ctx, result))
                         });
                 });
             });
