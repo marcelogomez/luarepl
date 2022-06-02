@@ -1,4 +1,3 @@
-use rlua::Error;
 use rlua::Lua;
 use rlua::Value;
 use std::io::BufRead;
