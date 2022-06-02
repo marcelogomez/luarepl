@@ -1,5 +1,7 @@
+use rlua::Error;
 use rlua::Lua;
 use rlua::Value;
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::thread;
 use tokio::sync::mpsc::UnboundedSender;
@@ -9,6 +11,73 @@ use tokio::task::JoinHandle;
 struct Session {
     expr_sender: UnboundedSender<String>,
     eval_thread: JoinHandle<()>,
+}
+
+#[derive(Debug)]
+struct EvalResponse {
+    success: bool,
+    objects: HashMap<String, LuaObject>,
+    value: LuaValue,
+}
+
+#[derive(Debug)]
+enum LuaValue {
+    Nil,
+    Boolean(bool),
+    Number(f64),
+    String(String),
+    ObjectRef(String),
+}
+
+#[derive(Debug)]
+struct LuaObject {
+    members: Vec<(String, LuaValue)>,
+}
+
+impl From<Result<Value<'_>, Error>> for EvalResponse {
+    fn from(eval_result: Result<Value<'_>, Error>) -> Self {
+        match eval_result {
+            Err(_e) => Self {
+                success: false,
+                objects: HashMap::new(),
+                value: LuaValue::Nil,
+            },
+            Ok(v) => Self::from(v),
+        }
+    }
+}
+
+impl From<Value<'_>> for EvalResponse {
+    fn from(value: Value) -> Self {
+        match value {
+            Value::Boolean(b) => Self {
+                success: true,
+                objects: HashMap::new(),
+                value: LuaValue::Boolean(b),
+            },
+            Value::String(s) => Self {
+                success: true,
+                objects: HashMap::new(),
+                value: LuaValue::String(s.to_str().unwrap_or_default().to_string()),
+            },
+            Value::Number(n) => Self {
+                success: true,
+                objects: HashMap::new(),
+                value: LuaValue::Number(n),
+            },
+            Value::Integer(n) => Self {
+                success: true,
+                objects: HashMap::new(),
+                value: LuaValue::Number(n as f64),
+            },
+            Value::Nil => Self {
+                success: true,
+                objects: HashMap::new(),
+                value: LuaValue::Nil,
+            },
+            v => panic!("Value not yet supported {:?}", v),
+        }
+    }
 }
 
 impl Session {
@@ -22,7 +91,9 @@ impl Session {
                     inner_receiver
                         .into_iter()
                         .map(|expr| (ctx.load(&expr).eval::<Value>(), expr))
-                        .for_each(|(result, expr)| println!("{} -> {:?}", expr, result));
+                        .for_each(|(result, expr)| {
+                            println!("{} -> {:?}", expr, EvalResponse::from(result))
+                        });
                 });
             });
 
