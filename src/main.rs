@@ -8,14 +8,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::BufRead;
 use std::thread;
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
-
-#[derive(Debug)]
-struct Session {
-    expr_sender: UnboundedSender<String>,
-    eval_thread: JoinHandle<()>,
-}
 
 #[derive(Debug)]
 struct EvalResponse {
@@ -150,9 +145,17 @@ impl EvalResponse {
     }
 }
 
+#[derive(Debug)]
+struct Session {
+    expr_sender: UnboundedSender<String>,
+    result_receiver: UnboundedReceiver<EvalResponse>,
+    eval_thread: JoinHandle<()>,
+}
+
 impl Session {
     pub fn new() -> Self {
         let (expr_sender, mut expr_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (result_sender, result_receiver) = tokio::sync::mpsc::unbounded_channel();
         let eval_thread = tokio::spawn(async move {
             let lua = Lua::new();
             let (inner_sender, inner_receiver) = std::sync::mpsc::channel::<String>();
@@ -160,9 +163,10 @@ impl Session {
                 lua.context(|ctx| {
                     inner_receiver
                         .into_iter()
-                        .map(|expr| (ctx.load(&expr).eval::<Value>(), expr))
-                        .for_each(|(result, expr)| {
-                            println!("{} -> {:#?}", expr, EvalResponse::from_result(ctx, result))
+                        .map(|expr| ctx.load(&expr).eval::<Value>())
+                        .for_each(|result| {
+                            // TODO: handle this
+                            let _ = result_sender.send(EvalResponse::from_result(ctx, result));
                         });
                 });
             });
@@ -174,13 +178,15 @@ impl Session {
         });
 
         Self {
+            result_receiver,
             expr_sender,
             eval_thread,
         }
     }
 
-    pub async fn eval(&mut self, expr: String) {
+    pub async fn eval(&mut self, expr: String) -> EvalResponse {
         let _ = self.expr_sender.send(expr);
+        self.result_receiver.recv().await.unwrap()
     }
 }
 
@@ -188,6 +194,6 @@ impl Session {
 async fn main() {
     let mut session = Session::new();
     for line in std::io::stdin().lock().lines() {
-        session.eval(line.unwrap()).await;
+        println!("{:#?}", session.eval(line.unwrap()).await);
     }
 }
