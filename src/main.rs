@@ -12,14 +12,14 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct EvalResponse {
     success: bool,
     objects: HashMap<String, LuaObject>,
     value: LuaValue,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum LuaValue {
     Nil,
     Boolean(bool),
@@ -28,7 +28,7 @@ enum LuaValue {
     ObjectRef(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct LuaObject {
     members: Vec<(LuaValue, LuaValue)>,
 }
@@ -196,4 +196,49 @@ async fn main() {
     for line in std::io::stdin().lock().lines() {
         println!("{:#?}", session.eval(line.unwrap()).await);
     }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_simple() {
+        let mut session = Session::new();
+
+        assert_eq!(
+            session.eval("x = 1".to_string()).await,
+            EvalResponse {
+                success: true,
+                objects: HashMap::new(),
+                value: LuaValue::Nil,
+            }
+        );
+
+        assert_eq!(
+            session.eval("return x".to_string()).await,
+            EvalResponse {
+                success: true,
+                objects: HashMap::new(),
+                value: LuaValue::Number(1.0),
+            }
+        );
+    }
+
+    // #[tokio::test]
+    // async fn test_simple_table() {
+    //     let mut session = Session::new();
+    //     session.eval("x = {}".to_string()).await;
+    //     session.eval("x['a'] = 1".to_string()).await;
+    //     session.eval("x['b'] = 'x'".to_string()).await;
+
+    //     assert_eq!(
+    //         session.eval("return x".to_string()).await,
+    //         EvalResponse {
+    //             success: true,
+    //             objects: HashMap::new(),
+    //             value: LuaValue::Number(1.0),
+    //         }
+    //     );
+    // }
 }
