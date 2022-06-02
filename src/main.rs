@@ -225,20 +225,28 @@ mod test {
         );
     }
 
-    // #[tokio::test]
-    // async fn test_simple_table() {
-    //     let mut session = Session::new();
-    //     session.eval("x = {}".to_string()).await;
-    //     session.eval("x['a'] = 1".to_string()).await;
-    //     session.eval("x['b'] = 'x'".to_string()).await;
+    #[tokio::test]
+    async fn test_simple_table() {
+        let mut session = Session::new();
+        let resp = session.eval("x = {}; return x".to_string()).await;
 
-    //     assert_eq!(
-    //         session.eval("return x".to_string()).await,
-    //         EvalResponse {
-    //             success: true,
-    //             objects: HashMap::new(),
-    //             value: LuaValue::Number(1.0),
-    //         }
-    //     );
-    // }
+        assert!(resp.success);
+        let table_id = if let LuaValue::ObjectRef(id) = &resp.value {
+            id.to_string()
+        } else {
+            panic!("Expected an object ref got {:?}!", resp.value);
+        };
+
+        let resp = session.eval("x['a'] = 1 ; return x".to_string()).await;
+        assert!(resp.success);
+        assert_eq!(
+            resp.objects,
+            vec![(
+                table_id,
+                LuaObject {
+                    members: vec![(LuaValue::String("a".to_string()), LuaValue::Number(1.0))]
+                }
+            )].into_iter().collect(),
+       );
+    }
 }
